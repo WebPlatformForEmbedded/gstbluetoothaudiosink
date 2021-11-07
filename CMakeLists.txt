@@ -18,7 +18,7 @@ set(COMMON_INCLUDES
         ${GST_INCLUDE_DIRS})
 
 set(COMMON_LIBRARIES
-        ${GST_LIBRARIES})
+        ${GST_LIBRARIES} bluetoothaudiosink)
 
 target_include_directories(${PROJECT_NAME}
     PUBLIC

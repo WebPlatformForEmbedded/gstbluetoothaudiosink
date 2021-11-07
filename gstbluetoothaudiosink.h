@@ -36,6 +36,8 @@ typedef struct _GstBluetoothAudioSinkClass GstBluetoothAudioSinkClass;
 struct _GstBluetoothAudioSink
 {
   GstAudioSink base_bluetoothaudiosink;
+  gboolean request_acquire;
+  gboolean acquired;
 };
 
 struct _GstBluetoothAudioSinkClass
