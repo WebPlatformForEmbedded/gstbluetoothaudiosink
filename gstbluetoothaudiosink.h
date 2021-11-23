@@ -38,10 +38,20 @@ struct _GstBluetoothAudioSink
   GstAudioSink base_bluetoothaudiosink;
 
   // private:
+  guint sample_rate;
+  guint frame_rate;
+  guint channels;
+  guint bps;
+  guint bpf;
+
+  // private:
   gboolean request_acquire;
   gboolean request_playback;
+  gboolean request_reset;
   gboolean acquired;
   gboolean playing;
+
+  GMutex lock;
 };
 
 struct _GstBluetoothAudioSinkClass

@@ -30,57 +30,99 @@ GST_DEBUG_CATEGORY_STATIC (gst_bluetoothaudiosink_debug_category);
 
 /* implementation */
 
-#define CONNECTOR "/tmp/gstbtaudiobuffer"
-
 static void _audio_sink_clear (GstBluetoothAudioSink* bluetoothaudiosink)
 {
+  g_assert (bluetoothaudiosink != NULL);
+
+  g_mutex_lock (&bluetoothaudiosink->lock);
+
+  /* Not playing now and don't want playback. */
   bluetoothaudiosink->request_acquire = FALSE;
   bluetoothaudiosink->request_playback = FALSE;
+  bluetoothaudiosink->request_reset = FALSE;
   bluetoothaudiosink->acquired = FALSE;
   bluetoothaudiosink->playing = FALSE;
+
+  /* Let's start with some sensible format. */
+  bluetoothaudiosink->sample_rate = 44100;
+  bluetoothaudiosink->frame_rate = 10000;
+  bluetoothaudiosink->channels = 2;
+  bluetoothaudiosink->bpf = 4;
+  bluetoothaudiosink->bps = 2;
+
+  g_mutex_unlock (&bluetoothaudiosink->lock);
 }
 
-static gboolean _audio_sink_acquire (GstBluetoothAudioSink* bluetoothaudiosink)
+static gboolean _audio_sink_acquire (GstBluetoothAudioSink *bluetoothaudiosink, gboolean postpone, guint32 sample_rate, guint16 frame_rate, guint8 bpf, guint8 bps)
 {
   bluetoothaudiosink_state_t state = BLUETOOTHAUDIOSINK_STATE_UNKNOWN;
-  gboolean result = TRUE;
+  gboolean result = FALSE;
+
+  g_assert (bluetoothaudiosink != NULL);
 
   bluetoothaudiosink_state (&state);
 
+  g_mutex_lock (&bluetoothaudiosink->lock);
+
   if (state == BLUETOOTHAUDIOSINK_STATE_CONNECTED) {
+    bluetoothaudiosink_format_t format;
+
+    if (sample_rate != 0) {
+      /* Otherwise use previously set format. */
+      bluetoothaudiosink->sample_rate = sample_rate;
+      bluetoothaudiosink->frame_rate = frame_rate;
+      bluetoothaudiosink->channels = (bpf / bps);
+      bluetoothaudiosink->bps = bps;
+      bluetoothaudiosink->bpf = bpf;
+    }
+
+    format.sample_rate = bluetoothaudiosink->sample_rate;
+    format.frame_rate = bluetoothaudiosink->frame_rate;
+    format.channels = bluetoothaudiosink->channels;
+    format.resolution = (bluetoothaudiosink->bps * 8);
+
     bluetoothaudiosink->request_acquire = FALSE;
 
-    /* pick this up from... somewhere... */
-    bluetoothaudiosink_format_t format;
-    format.sample_rate = 44100;
-    format.frame_rate = 24;
-    format.channels = 2;
-    format.resolution = 16;
+    if (bluetoothaudiosink->acquired) {
+      /* It is us still holding the lock, so release it. */
+      if (bluetoothaudiosink_relinquish() != 0) {
+        GST_ERROR_OBJECT (bluetoothaudiosink, "bluetoothaudiosink_relinquish() failed");
+      }
 
-    if (bluetoothaudiosink_acquire (CONNECTOR, &format, 2) != 0) {
+      bluetoothaudiosink->acquired = FALSE;
+    }
+
+    if (bluetoothaudiosink_acquire (&format) != 0) {
       GST_ERROR_OBJECT (bluetoothaudiosink, "bluetoothaudiosink_acquire() failed");
-      result = FALSE;
     } else {
       GST_INFO_OBJECT (bluetoothaudiosink, "Starting Bluetooth playback session...");
       bluetoothaudiosink->acquired = TRUE;
+      result = TRUE;
     }
-  } else if ((state != BLUETOOTHAUDIOSINK_STATE_READY) || (state != BLUETOOTHAUDIOSINK_STATE_STREAMING)) {
-    /* Can't acquire just now, but schedule acquiring as soon as the device connects! */
+  } else if (postpone && ((state != BLUETOOTHAUDIOSINK_STATE_READY) || (state != BLUETOOTHAUDIOSINK_STATE_STREAMING))) {
+    GST_INFO_OBJECT (bluetoothaudiosink, "Device not yet connected, will acquire it when it connects");
     bluetoothaudiosink->request_acquire = TRUE;
+    result = TRUE;
   }
+
+  g_mutex_unlock (&bluetoothaudiosink->lock);
 
   return result;
 }
 
-static gboolean _audio_sink_relinquish (GstBluetoothAudioSink* bluetoothaudiosink)
+static gboolean _audio_sink_relinquish (GstBluetoothAudioSink *bluetoothaudiosink)
 {
   bluetoothaudiosink_state_t state = BLUETOOTHAUDIOSINK_STATE_UNKNOWN;
   gboolean result = TRUE;
 
-  bluetoothaudiosink->request_acquire = FALSE;
-  bluetoothaudiosink->request_playback = FALSE;
+  g_assert (bluetoothaudiosink != NULL);
 
   bluetoothaudiosink_state (&state);
+
+  g_mutex_lock (&bluetoothaudiosink->lock);
+
+  bluetoothaudiosink->request_acquire = FALSE;
+  bluetoothaudiosink->request_playback = FALSE;
 
   if ((state == BLUETOOTHAUDIOSINK_STATE_READY) || (state == BLUETOOTHAUDIOSINK_STATE_STREAMING)) {
     if (bluetoothaudiosink_relinquish() != 0) {
@@ -91,15 +133,21 @@ static gboolean _audio_sink_relinquish (GstBluetoothAudioSink* bluetoothaudiosin
     bluetoothaudiosink->acquired = FALSE;
   }
 
+  g_mutex_unlock (&bluetoothaudiosink->lock);
+
   return result;
 }
 
-static gboolean _audio_sink_start (GstBluetoothAudioSink* bluetoothaudiosink)
+static gboolean _audio_sink_start (GstBluetoothAudioSink *bluetoothaudiosink)
 {
   bluetoothaudiosink_state_t state = BLUETOOTHAUDIOSINK_STATE_UNKNOWN;
   gboolean result = TRUE;
 
+  g_assert (bluetoothaudiosink != NULL);
+
   bluetoothaudiosink_state (&state);
+
+  g_mutex_lock (&bluetoothaudiosink->lock);
 
   if (state == BLUETOOTHAUDIOSINK_STATE_READY) {
     if (bluetoothaudiosink_speed (100) != 0) {
@@ -110,21 +158,27 @@ static gboolean _audio_sink_start (GstBluetoothAudioSink* bluetoothaudiosink)
       bluetoothaudiosink->playing = TRUE;
     }
   } else if (state != BLUETOOTHAUDIOSINK_STATE_STREAMING) {
-    /* Can't start playback just now, but schedule acquiring as soon as the device connects! */
+    GST_INFO_OBJECT (bluetoothaudiosink, "Device not yet connected, will start playback once connected");
     bluetoothaudiosink->request_playback = TRUE;
   }
+
+  g_mutex_unlock (&bluetoothaudiosink->lock);
 
   return result;
 }
 
-static gboolean _audio_sink_stop (GstBluetoothAudioSink* bluetoothaudiosink)
+static gboolean _audio_sink_stop (GstBluetoothAudioSink *bluetoothaudiosink)
 {
   bluetoothaudiosink_state_t state = BLUETOOTHAUDIOSINK_STATE_UNKNOWN;
   gboolean result = TRUE;
 
-  bluetoothaudiosink->request_playback = FALSE;
+  g_assert (bluetoothaudiosink != NULL);
 
   bluetoothaudiosink_state (&state);
+
+  g_mutex_lock (&bluetoothaudiosink->lock);
+
+  bluetoothaudiosink->request_playback = FALSE;
 
   if (state == BLUETOOTHAUDIOSINK_STATE_STREAMING) {
     if (bluetoothaudiosink_speed (0) != 0) {
@@ -135,35 +189,91 @@ static gboolean _audio_sink_stop (GstBluetoothAudioSink* bluetoothaudiosink)
     bluetoothaudiosink->playing = FALSE;
   }
 
+  g_mutex_unlock (&bluetoothaudiosink->lock);
+
   return result;
 }
 
-static guint _audio_sink_frame (GstBluetoothAudioSink *bluetoothaudiosink, gpointer data, guint size)
+static gint _audio_sink_frame (GstBluetoothAudioSink *bluetoothaudiosink, const gpointer data, const guint size)
 {
-  guint16 played = 0;
+  gint result = 0;
+
+  g_assert (bluetoothaudiosink != NULL);
+
+  g_mutex_lock (&bluetoothaudiosink->lock);
 
   if (bluetoothaudiosink->playing) {
+    uint16_t played = 0;
+
+    g_mutex_unlock (&bluetoothaudiosink->lock);
+
+    /* This is a blocking call. */
     if (bluetoothaudiosink_frame (size, data, &played) != 0) {
       GST_ERROR_OBJECT( bluetoothaudiosink, "bluetoothaudiosink_frame() failed");
+    } else {
+      result = played;
+    }
+  } else if (bluetoothaudiosink->request_reset) {
+    bluetoothaudiosink->request_reset = FALSE;
+
+    g_mutex_unlock (&bluetoothaudiosink->lock);
+
+    /* A rather silly trick to ensure the write loop in audiosink is broken. */
+    result = size;
+  }
+
+  return result;
+}
+
+static guint _audio_sink_delay (GstBluetoothAudioSink *bluetoothaudiosink)
+{
+  guint result = 0;
+
+  g_assert (bluetoothaudiosink != NULL);
+
+  g_mutex_lock (&bluetoothaudiosink->lock);
+
+  if (bluetoothaudiosink->playing) {
+    uint32_t delay = 0;
+    if (bluetoothaudiosink_delay (&delay) != 0) {
+      GST_ERROR_OBJECT (bluetoothaudiosink, "bluetoothaudiosink_delay() failed");
+    } else {
+      /* In fact the requested value is measured in frames, not samples. */
+      result = (delay / bluetoothaudiosink->channels);
     }
   }
 
-  return played;
+  g_mutex_unlock (&bluetoothaudiosink->lock);
+
+  return result;
+}
+
+static void _audio_sink_reset (GstBluetoothAudioSink *bluetoothaudiosink)
+{
+  g_mutex_lock (&bluetoothaudiosink->lock);
+
+  bluetoothaudiosink->request_reset = TRUE;
+
+  g_mutex_unlock (&bluetoothaudiosink->lock);
 }
 
 static void _audio_sink_callback_connected (void *user_data)
 {
   GstBluetoothAudioSink *bluetoothaudiosink = (GstBluetoothAudioSink*)user_data;
 
+  g_assert (bluetoothaudiosink != NULL);
+
   if (bluetoothaudiosink->request_acquire) {
-    if (!_audio_sink_acquire (bluetoothaudiosink)) {
+    if (!_audio_sink_acquire (bluetoothaudiosink, TRUE, 0, 0, 0, 0)) {
       GST_ERROR_OBJECT (bluetoothaudiosink, "Failed to acquire Bluetooth audio sink device!");
     }
+  } else {
+    GST_DEBUG_OBJECT (bluetoothaudiosink, "Sink connected, but acquiring not requested");
   }
 
   if (bluetoothaudiosink->request_playback) {
     if (!_audio_sink_start (bluetoothaudiosink)) {
-      GST_ERROR_OBJECT (bluetoothaudiosink, "Failed to start playback on the Bluetooth audi sink device!");
+      GST_ERROR_OBJECT (bluetoothaudiosink, "Failed to start playback on the Bluetooth audio sink device!");
     }
   }
 }
@@ -172,13 +282,30 @@ static void _audio_sink_callback_disconnected (void *user_data)
 {
   GstBluetoothAudioSink *bluetoothaudiosink = (GstBluetoothAudioSink*)user_data;
 
-  _audio_sink_clear (bluetoothaudiosink);
+  g_assert (bluetoothaudiosink != NULL);
+
+  g_mutex_lock (&bluetoothaudiosink->lock);
+
+  if (bluetoothaudiosink->playing) {
+    bluetoothaudiosink->playing = FALSE;
+    bluetoothaudiosink->request_playback = TRUE;
+  }
+
+  if (bluetoothaudiosink->acquired) {
+    bluetoothaudiosink->acquired = FALSE;
+    bluetoothaudiosink->request_acquire = TRUE;
+  }
+
+  g_mutex_unlock (&bluetoothaudiosink->lock);
+
 }
 
 static void _audio_sink_callback_state_updated (void *user_data)
 {
   GstBluetoothAudioSink *bluetoothaudiosink = (GstBluetoothAudioSink*)user_data;
   bluetoothaudiosink_state_t state = BLUETOOTHAUDIOSINK_STATE_UNKNOWN;
+
+  g_assert (bluetoothaudiosink != NULL);
 
   if (bluetoothaudiosink_state (&state) == 0) {
     switch (state) {
@@ -211,11 +338,13 @@ static void _audio_sink_callback_state_updated (void *user_data)
   }
 }
 
-static void _audio_sink_callback_operational_state_updated (const bool running, void *user_data)
+static void _audio_sink_callback_operational_state_updated (const uint8_t running, void *user_data)
 {
   GstBluetoothAudioSink *bluetoothaudiosink = (GstBluetoothAudioSink*)user_data;
 
-  if (running == true) {
+  g_assert (bluetoothaudiosink != NULL);
+
+  if (running) {
     bluetoothaudiosink_state_t state = BLUETOOTHAUDIOSINK_STATE_UNKNOWN;
 
     bluetoothaudiosink_state (&state);
@@ -237,6 +366,8 @@ static void _audio_sink_callback_operational_state_updated (const bool running, 
 
 static void _audio_sink_initialize (GstBluetoothAudioSink *bluetoothaudiosink)
 {
+  g_mutex_init (&bluetoothaudiosink->lock);
+
   _audio_sink_clear (bluetoothaudiosink);
 
   /* Register for the Bluetooth Audio Sink service updates... */
@@ -249,9 +380,6 @@ static void _audio_sink_initialize (GstBluetoothAudioSink *bluetoothaudiosink)
 
 static void _audio_sink_dispose (GstBluetoothAudioSink *bluetoothaudiosink)
 {
-  bluetoothaudiosink->acquired = FALSE;
-  bluetoothaudiosink->request_acquire = FALSE;
-
   bluetoothaudiosink_unregister_state_update_callback (&_audio_sink_callback_state_updated);
   bluetoothaudiosink_unregister_operational_state_update_callback (&_audio_sink_callback_operational_state_updated);
   bluetoothaudiosink_dispose ();
@@ -286,7 +414,7 @@ GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("audio/x-raw,"
       "format=S16LE,"
-      "rate=[44100,48000],"
+      "rate={32000,44100,48000},"
       "channels=[1,2],"
       "layout=interleaved")
     );
@@ -363,7 +491,7 @@ void gst_bluetoothaudiosink_dispose (GObject *object)
   GST_DEBUG_OBJECT (bluetoothaudiosink, "dispose");
 
   /* clean up as as fast possible.  may be called multiple times */
-  _audio_sink_dispose (bluetoothaudiosink);
+  _audio_sink_clear (bluetoothaudiosink);
 
   G_OBJECT_CLASS (gst_bluetoothaudiosink_parent_class)->dispose (object);
 }
@@ -375,6 +503,9 @@ void gst_bluetoothaudiosink_finalize (GObject *object)
   GST_DEBUG_OBJECT (bluetoothaudiosink, "finalize");
 
   /* clean up object here */
+  _audio_sink_dispose (bluetoothaudiosink);
+
+  g_mutex_clear (&bluetoothaudiosink->lock);
 
   G_OBJECT_CLASS (gst_bluetoothaudiosink_parent_class)->finalize (object);
 }
@@ -387,8 +518,9 @@ static gboolean gst_bluetoothaudiosink_open (GstAudioSink *sink)
 
   GST_DEBUG_OBJECT (bluetoothaudiosink, "open");
 
-  if (!_audio_sink_acquire (bluetoothaudiosink)) {
-    GST_ERROR_OBJECT (bluetoothaudiosink, "Failed to acquire Bluetooth audio sink device!");
+  /* Lock the device now. 
+  if (!_audio_sink_acquire (bluetoothaudiosink, FALSE, 0, 0, 0, 0)) {
+    GST_WARNING_OBJECT (bluetoothaudiosink, "Bluetooth audio device not available!");
     result = FALSE;
   }
 
@@ -401,11 +533,26 @@ static gboolean gst_bluetoothaudiosink_prepare (GstAudioSink *sink, GstAudioRing
   GstBluetoothAudioSink *bluetoothaudiosink = GST_BLUETOOTHAUDIOSINK (sink);
   gboolean result = TRUE;
 
+  const guint32 sample_rate = GST_AUDIO_INFO_RATE (&spec->info);
+  const guint8 bpf = GST_AUDIO_INFO_BPF (&spec->info);
+  const guint8 bps = GST_AUDIO_INFO_BPS (&spec->info);
+  const guint16 frame_rate = ((sample_rate * bpf * 100) / spec->segsize);
+
   GST_DEBUG_OBJECT (bluetoothaudiosink, "prepare");
 
-  if (!_audio_sink_start (bluetoothaudiosink)) {
-    GST_ERROR_OBJECT (bluetoothaudiosink, "Failed to start playback over Bluetooth audio sink device!");
+  GST_INFO_OBJECT (bluetoothaudiosink, "rate=%iHz, channels=%i, bpf=%i, bps=%i, framerate=%i.%02ifps, segsize=%i, segtotal=%i, latencytime=%ius",
+                   sample_rate, (bpf/bps), bpf, bps, (frame_rate/100), (frame_rate%100), spec->segsize, spec->segtotal, spec->latency_time);
+
+  if (!_audio_sink_acquire (bluetoothaudiosink, TRUE, sample_rate, frame_rate, bpf, bps)) {
+    GST_ERROR_OBJECT (bluetoothaudiosink, "Failed to acquire Bluetooth audio sink device!");
     result = FALSE;
+  }
+
+  if (result) {
+    if (!_audio_sink_start (bluetoothaudiosink)) {
+      GST_ERROR_OBJECT (bluetoothaudiosink, "Failed to start playback over Bluetooth audio sink device!");
+      result = FALSE;
+    }
   }
 
   return result;
@@ -448,7 +595,9 @@ static gint gst_bluetoothaudiosink_write (GstAudioSink *sink, gpointer data, gui
 {
   GstBluetoothAudioSink *bluetoothaudiosink = GST_BLUETOOTHAUDIOSINK (sink);
 
-  gint result = _audio_sink_frame (bluetoothaudiosink, data, length);
+  // GST_DEBUG_OBJECT (bluetoothaudiosink, "write");
+
+  const gint result = _audio_sink_frame (bluetoothaudiosink, data, length);
 
   return result;
 }
@@ -458,9 +607,11 @@ static guint gst_bluetoothaudiosink_delay (GstAudioSink *sink)
 {
   GstBluetoothAudioSink *bluetoothaudiosink = GST_BLUETOOTHAUDIOSINK (sink);
 
-  GST_DEBUG_OBJECT (bluetoothaudiosink, "delay");
+  // GST_DEBUG_OBJECT (bluetoothaudiosink, "delay");
 
-  return 0;
+  const guint result = _audio_sink_delay (bluetoothaudiosink);
+
+  return result;
 }
 
 /* reset the audio device, unblock from a write */
@@ -469,11 +620,13 @@ static void gst_bluetoothaudiosink_reset (GstAudioSink *sink)
   GstBluetoothAudioSink *bluetoothaudiosink = GST_BLUETOOTHAUDIOSINK (sink);
 
   GST_DEBUG_OBJECT (bluetoothaudiosink, "reset");
+
+  bluetoothaudiosink->request_reset = TRUE;
 }
 
 static gboolean plugin_init (GstPlugin *plugin)
 {
-  return gst_element_register (plugin, "bluetoothaudiosink", GST_RANK_NONE, GST_TYPE_BLUETOOTHAUDIOSINK);
+  return gst_element_register (plugin, "bluetoothaudiosink", (GST_RANK_PRIMARY + 100 /* whoa! */), GST_TYPE_BLUETOOTHAUDIOSINK);
 }
 
 #ifndef VERSION
