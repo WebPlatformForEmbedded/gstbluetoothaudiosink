@@ -382,7 +382,7 @@ static void _audio_sink_dispose (GstBluetoothAudioSink *bluetoothaudiosink)
 {
   bluetoothaudiosink_unregister_state_update_callback (&_audio_sink_callback_state_updated);
   bluetoothaudiosink_unregister_operational_state_update_callback (&_audio_sink_callback_operational_state_updated);
-  bluetoothaudiosink_dispose ();
+  /* bluetoothaudiosink_dispose (); */
 }
 
 
@@ -518,7 +518,7 @@ static gboolean gst_bluetoothaudiosink_open (GstAudioSink *sink)
 
   GST_DEBUG_OBJECT (bluetoothaudiosink, "open");
 
-  /* Lock the device now. 
+  /* Lock the device now. */
   if (!_audio_sink_acquire (bluetoothaudiosink, FALSE, 0, 0, 0, 0)) {
     GST_WARNING_OBJECT (bluetoothaudiosink, "Bluetooth audio device not available!");
     result = FALSE;
