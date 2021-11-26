@@ -307,11 +307,7 @@ static void _audio_sink_callback_disconnected (void *user_data)
 
   g_assert (bluetoothaudiosink != NULL);
 
-
- GST_ERROR_OBJECT (bluetoothaudiosink, "disconnected 1");
-
   g_mutex_lock (&bluetoothaudiosink->lock);
-GST_ERROR_OBJECT (bluetoothaudiosink, "disconnected 2");
 
   if (bluetoothaudiosink->playing) {
     bluetoothaudiosink->playing = FALSE;
@@ -324,9 +320,6 @@ GST_ERROR_OBJECT (bluetoothaudiosink, "disconnected 2");
   }
 
   g_mutex_unlock (&bluetoothaudiosink->lock);
-
-GST_ERROR_OBJECT (bluetoothaudiosink, "disconnected 3");
-
 }
 
 static void _audio_sink_callback_state_updated (void *user_data)
