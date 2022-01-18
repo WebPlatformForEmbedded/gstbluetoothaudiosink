@@ -58,11 +58,11 @@ static void _audio_sink_clear (GstBluetoothAudioSink* bluetoothaudiosink)
   bluetoothaudiosink->playing = FALSE;
 
   /* Let's start with some sensible format. */
-  bluetoothaudiosink->sample_rate = 44100;
-  bluetoothaudiosink->frame_rate = 10000;
+  bluetoothaudiosink->sample_rate = 48000;
+  bluetoothaudiosink->frame_rate = 10000; /* 100 Hz */
   bluetoothaudiosink->channels = 2;
-  bluetoothaudiosink->bpf = 4;
-  bluetoothaudiosink->bps = 2;
+  bluetoothaudiosink->bpf = 4; /* bits per frame */
+  bluetoothaudiosink->bps = 2; /* bits per sample */
 
   g_mutex_unlock (&bluetoothaudiosink->lock);
 }
@@ -85,7 +85,7 @@ static gboolean _audio_sink_acquire (GstBluetoothAudioSink *bluetoothaudiosink, 
       && (sample_rate != bluetoothaudiosink->sample_rate) || ( bluetoothaudiosink->frame_rate != frame_rate) || (bluetoothaudiosink->bps != bps) || (bpf != bluetoothaudiosink->bpf)) {
 
       /* It is us still holding the lock, so release it. */
-      if (bluetoothaudiosink_relinquish() != 0) {
+      if (bluetoothaudiosink_relinquish () != 0) {
         GST_ERROR_OBJECT (bluetoothaudiosink, "bluetoothaudiosink_relinquish() failed");
       }
 
@@ -97,7 +97,7 @@ static gboolean _audio_sink_acquire (GstBluetoothAudioSink *bluetoothaudiosink, 
       bluetoothaudiosink_format_t format;
 
       if (sample_rate != 0) {
-        /* Otherwise use previously set format. */
+        /* (Otherwise use previously set format.) */
         bluetoothaudiosink->sample_rate = sample_rate;
         bluetoothaudiosink->frame_rate = frame_rate;
         bluetoothaudiosink->channels = (bpf / bps);
@@ -147,7 +147,7 @@ static gboolean _audio_sink_relinquish (GstBluetoothAudioSink *bluetoothaudiosin
   bluetoothaudiosink->request_playback = FALSE;
 
   if ((state == BLUETOOTHAUDIOSINK_STATE_READY) || (state == BLUETOOTHAUDIOSINK_STATE_STREAMING)) {
-    if (bluetoothaudiosink_relinquish() != 0) {
+    if (bluetoothaudiosink_relinquish () != 0) {
       GST_ERROR_OBJECT (bluetoothaudiosink, "bluetoothaudiosink_relinquish() failed");
       result = FALSE;
     }
@@ -379,6 +379,8 @@ static void _audio_sink_callback_operational_state_updated (const uint8_t runnin
       /* Register for the sink updates... */
       if (bluetoothaudiosink_register_state_update_callback (&_audio_sink_callback_state_updated, bluetoothaudiosink) != 0) {
         GST_ERROR_OBJECT (bluetoothaudiosink, "bluetoothaudiosink_register_state_update_callback() failed");
+      } else {
+        GST_INFO_OBJECT (bluetoothaudiosink, "Successfully registered to Bluetooth Audio Sink status update callback");
       }
     }
   } else {
@@ -437,7 +439,7 @@ GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("audio/x-raw,"
       "format=S16LE,"
-      "rate={32000,44100,48000},"
+      "rate={32000,44100,48000}," /* Standard sample rates required to be supported by all sink devices.*/
       "channels=[1,2],"
       "layout=interleaved")
     );
