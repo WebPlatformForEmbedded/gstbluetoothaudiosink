@@ -289,7 +289,14 @@ static void _audio_sink_callback_connected (void *user_data)
 
   g_assert (bluetoothaudiosink != NULL);
 
-  if (bluetoothaudiosink->request_acquire) {
+  g_mutex_lock (&bluetoothaudiosink->lock);
+
+  const gboolean acquire = bluetoothaudiosink->request_acquire;
+  const gboolean playback = bluetoothaudiosink->request_playback;
+
+  g_mutex_unlock (&bluetoothaudiosink->lock);
+
+  if (acquire) {
     if (!_audio_sink_acquire (bluetoothaudiosink, TRUE, 0, 0, 0, 0)) {
       GST_ERROR_OBJECT (bluetoothaudiosink, "Failed to acquire Bluetooth audio sink device!");
     }
@@ -297,10 +304,12 @@ static void _audio_sink_callback_connected (void *user_data)
     GST_DEBUG_OBJECT (bluetoothaudiosink, "Sink connected, but acquiring not requested");
   }
 
-  if (bluetoothaudiosink->request_playback) {
+  if (playback) {
     if (!_audio_sink_start (bluetoothaudiosink)) {
       GST_ERROR_OBJECT (bluetoothaudiosink, "Failed to start playback on the Bluetooth audio sink device!");
     }
+  } else {
+    GST_DEBUG_OBJECT (bluetoothaudiosink, "Sink connected, but playback not requested");
   }
 }
 
@@ -335,6 +344,9 @@ static void _audio_sink_callback_state_changed (const bluetoothaudiosink_state_t
   case BLUETOOTHAUDIOSINK_STATE_UNASSIGNED:
     GST_WARNING_OBJECT (bluetoothaudiosink, "Bluetooth audio sink is currently unassigned!");
     break;
+  case BLUETOOTHAUDIOSINK_STATE_CONNECTING:
+    GST_INFO_OBJECT (bluetoothaudiosink, "Bluetooth audio sink is connecting...");
+    break;
   case BLUETOOTHAUDIOSINK_STATE_CONNECTED:
     GST_INFO_OBJECT (bluetoothaudiosink, "Bluetooth audio sink is now connected!");
     _audio_sink_callback_connected (bluetoothaudiosink);
@@ -356,6 +368,7 @@ static void _audio_sink_callback_state_changed (const bluetoothaudiosink_state_t
     GST_INFO_OBJECT (bluetoothaudiosink, "Bluetooth Audio sink is now streaming!");
     break;
   default:
+    GST_WARNING_OBJECT (bluetoothaudiosink, "Unmapped audio sink state %d!", state);
     break;
   }
 }
