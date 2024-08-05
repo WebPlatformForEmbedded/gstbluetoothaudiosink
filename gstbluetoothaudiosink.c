@@ -21,7 +21,7 @@
 #include <gst/audio/gstaudiosink.h>
 #include "gstbluetoothaudiosink.h"
 
-#include <WPEFramework/bluetoothaudiosink/bluetoothaudiosink.h>
+#include <Thunder/bluetoothaudiosink/bluetoothaudiosink.h>
 
 
 GST_DEBUG_CATEGORY_STATIC (gst_bluetoothaudiosink_debug_category);
@@ -29,20 +29,6 @@ GST_DEBUG_CATEGORY_STATIC (gst_bluetoothaudiosink_debug_category);
 
 
 /* implementation */
-
-static void _exit_handler (void)
-{
-  bluetoothaudiosink_dispose ();
-}
-
-static void _audio_sink_install_dispose_handler (void)
-{
-  static gboolean installed = FALSE;
-
-  if (!installed) {
-    atexit (_exit_handler);
-  }
-}
 
 static void _audio_sink_clear (GstBluetoothAudioSink* bluetoothaudiosink)
 {
@@ -400,20 +386,23 @@ static void _audio_sink_initialize (GstBluetoothAudioSink *bluetoothaudiosink)
 
   _audio_sink_clear (bluetoothaudiosink);
 
-  /* Register for the Bluetooth Audio Sink service updates... */
-  if (bluetoothaudiosink_register_operational_state_update_callback (&_audio_sink_callback_operational_state_updated, bluetoothaudiosink) != 0) {
-    GST_ERROR_OBJECT (bluetoothaudiosink, "bluetoothaudiosink_register_operational_state_update_callback() failed");
+  if (bluetoothaudiosink_init() != 0) {
+    GST_ERROR_OBJECT (bluetoothaudiosink, "bluetoothaudiosink_init() failed");
   } else {
-    GST_INFO_OBJECT (bluetoothaudiosink, "Successfully registered to Bluetooth Audio Sink service operational callback");
+    /* Register for the Bluetooth Audio Sink service updates... */
+    if (bluetoothaudiosink_register_operational_state_update_callback (&_audio_sink_callback_operational_state_updated, bluetoothaudiosink) != 0) {
+      GST_ERROR_OBJECT (bluetoothaudiosink, "bluetoothaudiosink_register_operational_state_update_callback() failed");
+    } else {
+      GST_INFO_OBJECT (bluetoothaudiosink, "Successfully registered to Bluetooth Audio Sink service operational callback");
+    }
   }
-
-  _audio_sink_install_dispose_handler ();
 }
 
 static void _audio_sink_dispose (GstBluetoothAudioSink *bluetoothaudiosink)
 {
   bluetoothaudiosink_unregister_state_changed_callback (&_audio_sink_callback_state_changed);
   bluetoothaudiosink_unregister_operational_state_update_callback (&_audio_sink_callback_operational_state_updated);
+  bluetoothaudiosink_deinit();
 }
 
 
